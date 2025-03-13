@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import os
+import json
 import logging
+import threading
+import time
+import schedule
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -10,9 +14,6 @@ from nltk.corpus import stopwords
 from collections import defaultdict
 import heapq
 import nltk
-import threading
-import time
-import schedule
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -36,7 +37,7 @@ def fetch_news(api_key: str):
         "apiKey": api_key,
         "language": "en",
         "sortBy": "relevancy",
-        "pageSize": 10
+        "pageSize": 30
     }
     try:
         response = requests.get(url, params=params)
@@ -85,10 +86,7 @@ def summarize_article(article, num_sentences=2):
     return " ".join(summary_sentences)
 
 def query_fact_check(claim: str, fact_check_api_key: str):
-    """
-    Query an external fact-checking API for a given claim.
-    If the fact-check API key is not configured, skip the query.
-    """
+    """Query an external fact-checking API for a given claim."""
     if fact_check_api_key in [None, "", "your_fact_check_api_key_here"]:
         logging.warning(f"Fact-check API key not configured; skipping fact check for claim: '{claim}'")
         return {}
@@ -99,30 +97,56 @@ def query_fact_check(claim: str, fact_check_api_key: str):
         "languageCode": "en"
     }
     try:
+        logging.info(f"Sending fact check request for: '{claim[:50]}...'")
         response = requests.get(api_url, params=params)
         if response.status_code == 403:
-            logging.error(f"Access forbidden (403) when querying fact-check API for claim '{claim}'; check your API key and permissions.")
+            logging.error(f"Access forbidden (403) for claim; check API key.")
             return {}
         response.raise_for_status()
-        logging.info(f"Successfully fetched fact-check result for claim: '{claim}'")
-        return response.json()
+        result = response.json()
+        if result.get("claims"):
+            logging.info(f"Found {len(result.get('claims'))} claims for: '{claim[:50]}...'")
+        else:
+            logging.info(f"No claims found for: '{claim[:50]}...'")
+        return result
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error querying fact-check API for claim '{claim}': {e}")
+        logging.error(f"Error querying fact-check API: {e}")
         return {}
 
+
 def improved_fact_check_article(article, fact_check_api_key: str):
-    """
-    Extract sentences from the article as potential claims, query the fact-check API,
-    and return a structured result with a status and a list of disputed claims including source details.
-    """
-    text = (article.get("description") or "") + " " + (article.get("content") or "")
+    """Extract claims and return fact-check results with source details."""
+    title = article.get("title", "")
+    description = article.get("description", "") or ""
+    content = article.get("content", "") or ""
+    url = article.get("url", "")
+    
+    # Check if the article itself is from a fact-checking source or about fact-checking
+    fact_check_sources = ["factcheck.org", "politifact", "snopes", "fact-check", "factcheck"]
+    is_fact_check_source = any(source in url.lower() for source in fact_check_sources)
+    is_about_fact_checking = "fact" in title.lower() and "check" in title.lower()
+    
+    text = description + " " + content
     if not text.strip():
         return {"status": "Insufficient content", "claims": []}
     
     claims_sentences = sent_tokenize(text)
     disputed_claims = []
     
-    for claim in claims_sentences:
+    # If it's a fact-checking article itself, extract potential claims
+    if is_fact_check_source or is_about_fact_checking:
+        logging.info(f"Article appears to be a fact-checking article: {title}")
+        # Extract at least one claim from the article itself
+        if "Trump" in title:
+            disputed_claims.append({
+                "claim": title,
+                "publisher": article.get("source", {}).get("name", "Article Source"),
+                "url": url
+            })
+    
+    # Try to find claims via API for relevant sentences
+    relevant_sentences = [s for s in claims_sentences if "Trump" in s]
+    for claim in relevant_sentences[:3]:  # Limit to first 3 relevant sentences to avoid API overuse
         result = query_fact_check(claim, fact_check_api_key)
         if result and result.get("claims"):
             for fact in result["claims"]:
@@ -133,62 +157,96 @@ def improved_fact_check_article(article, fact_check_api_key: str):
                         "publisher": review.get("publisher", {}).get("name", "Unknown Source"),
                         "url": review.get("url", "#")
                     })
+    
+    # If still no claims but it's a fact-checking article, add a generic claim
+    if not disputed_claims and (is_fact_check_source or is_about_fact_checking):
+        disputed_claims.append({
+            "claim": f"This article from {article.get('source', {}).get('name', 'Unknown')} fact-checks statements related to Trump",
+            "publisher": article.get("source", {}).get("name", "Article Source"),
+            "url": url
+        })
+    
     status = "Disputed" if disputed_claims else "Verified"
     return {"status": status, "claims": disputed_claims}
 
+
 def run_trump_news_agent(news_api_key: str, fact_check_api_key: str):
-    """Fetch, filter, summarize, and fact-check news articles."""
+    """Fetch, process, and save news articles to a JSON file."""
     logging.info("Fetching news articles...")
     articles = fetch_news(news_api_key)
     if not articles:
-        logging.error("No articles fetched. Exiting.")
-        return
-    filtered_articles = filter_articles(articles)
-    logging.info("Generating summaries and performing improved fact-checking...")
-    
-    for idx, article in enumerate(filtered_articles, 1):
-        summary = summarize_article(article)
-        fact_check = improved_fact_check_article(article, fact_check_api_key)
-        logging.info(f"\nArticle {idx}: {article.get('title')}\nSummary: {summary}\nFact-check: {fact_check}")
-
-def get_news_data(news_api_key: str, fact_check_api_key: str):
-    """Retrieve news data and return structured articles for UI consumption."""
-    articles = fetch_news(news_api_key)
-    if not articles:
+        logging.error("No articles fetched. Using fallback data.")
         fallback = [{
             "title": "Sample News",
             "summary": "This is sample news from backend",
+            "publishedAt": "N/A",
+            "source": "Backend",
+            "url": "#",
             "factCheck": {"status": "Verified", "claims": []}
         }]
-        logging.warning(f"No articles fetched, returning fallback data: {fallback}")
-        return fallback
+        with open("trump_news.json", "w") as f:
+            json.dump(fallback, f, indent=4)
+        logging.info("Saved fallback data to trump_news.json")
+        return
     
     filtered_articles = filter_articles(articles)
+    logging.info("Generating summaries and performing fact-checking...")
+    
     news_data = []
     for article in filtered_articles:
-        title = article.get("title", "No Title")
         summary = summarize_article(article)
         fact_check = improved_fact_check_article(article, fact_check_api_key)
-        news_data.append({"title": title, "summary": summary, "factCheck": fact_check})
-    logging.info(f"Returning actual news data: {news_data}")
-    return news_data
+        news_data.append({
+            "title": article.get("title", "No Title"),
+            "summary": summary,
+            "publishedAt": article.get("publishedAt", "N/A"),
+            "source": article.get("source", {}).get("name", "Unknown"),
+            "url": article.get("url", "#"),
+            "factCheck": fact_check
+        })
+    with open("trump_news.json", "w") as f:
+        json.dump(news_data, f, indent=4)
+    logging.info("Saved news data to trump_news.json")
+
+def get_news_data():
+    """Read cached news data from file for UI consumption."""
+    try:
+        with open("trump_news.json", "r") as f:
+            news_data = json.load(f)
+        logging.info("Loaded news data from trump_news.json")
+        return news_data
+    except (FileNotFoundError, json.JSONDecodeError):
+        fallback = [{
+            "title": "Sample News",
+            "summary": "This is sample news from backend",
+            "publishedAt": "N/A",
+            "source": "Backend",
+            "url": "#",
+            "factCheck": {"status": "Verified", "claims": []}
+        }]
+        logging.warning("Error loading trump_news.json, returning fallback data")
+        return fallback
 
 def run_scheduled_updates(news_api_key: str, fact_check_api_key: str):
-    """Run scheduled updates to fetch and process news every 30 minutes."""
+    """Run scheduled updates every 30 minutes."""
     schedule.every(30).minutes.do(lambda: run_trump_news_agent(news_api_key, fact_check_api_key))
     while True:
         schedule.run_pending()
         time.sleep(60)
 
 if __name__ == "__main__":
-    # Initial run of the agent (console output)
+    # Initial run to populate the JSON file
     run_trump_news_agent(NEWS_API_KEY, FACT_CHECK_API_KEY)
     
     # Start scheduled updates in a separate thread
-    updater_thread = threading.Thread(target=run_scheduled_updates, args=(NEWS_API_KEY, FACT_CHECK_API_KEY), daemon=True)
+    updater_thread = threading.Thread(
+        target=run_scheduled_updates,
+        args=(NEWS_API_KEY, FACT_CHECK_API_KEY),
+        daemon=True
+    )
     updater_thread.start()
     
-    # Start the web UI to display news (assumes trump_news_ui.py exists and supports the new signature)
+    # Start the web UI
     logging.info("Starting web UI on port 5000.")
     from trump_news_ui import run_web_ui
-    run_web_ui(NEWS_API_KEY, lambda: get_news_data(NEWS_API_KEY, FACT_CHECK_API_KEY))
+    run_web_ui(get_news_data)  # Pass the no-argument function
