@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: trumptracker-ai
+    env: docker
+    plan: free
+    envVars:
+      - key: NEWS_API_KEY
+        sync: false
+      - key: FACT_CHECK_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: DEBUG

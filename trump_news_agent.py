@@ -29,37 +29,91 @@ for resource in ['tokenizers/punkt', 'corpora/stopwords']:
     except LookupError:
         nltk.download(resource.split('/')[1])
 
-def fetch_news(api_key: str):
-    """Fetch news articles using the NewsAPI."""
+def fetch_news_with_pagination(api_key: str, num_articles=30):
+    """Fetch news articles using multiple pages if needed."""
     url = "https://newsapi.org/v2/everything"
-    params = {
-        "q": "Donald Trump",
-        "apiKey": api_key,
-        "language": "en",
-        "sortBy": "relevancy",
-        "pageSize": 30
-    }
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        articles = response.json().get("articles", [])
-        logging.info(f"Fetched {len(articles)} articles.")
-        return articles
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching news: {e}")
-        return []
+    all_articles = []
+    page = 1
+    page_size = 100  # Maximum allowed by NewsAPI
+    
+    logging.info(f"Starting article fetch with target count: {num_articles}")
+    
+    while len(all_articles) < num_articles and page <= 3:  # Limit to 3 pages max to avoid excessive API usage
+        params = {
+            "q": "Donald Trump OR Trump OR former president Trump OR Trump campaign",  # Expanded query
+            "apiKey": api_key,
+            "language": "en",
+            "sortBy": "relevancy",
+            "pageSize": page_size,
+            "page": page
+        }
+        
+        try:
+            logging.info(f"Fetching news page {page} with pageSize={page_size}")
+            response = requests.get(url, params=params)
+            
+            # Log API rate limits for debugging
+            if 'X-RateLimit-Limit' in response.headers:
+                logging.info(f"API Rate Limit: {response.headers.get('X-RateLimit-Limit')}")
+                logging.info(f"API Rate Remaining: {response.headers.get('X-RateLimit-Remaining')}")
+                
+            response.raise_for_status()
+            data = response.json()
+            articles = data.get("articles", [])
+            
+            if not articles:
+                logging.warning(f"No articles returned on page {page}")
+                break  # No more articles available
+            
+            logging.info(f"Retrieved {len(articles)} articles on page {page}")
+            all_articles.extend(articles)
+            
+            # Check if we've reached the end of available articles
+            total_results = data.get("totalResults", 0)
+            logging.info(f"API reports total results: {total_results}")
+            
+            if page * page_size >= total_results:
+                logging.info(f"Reached end of available articles: {total_results} total")
+                break
+                
+            page += 1
+            
+            # Respect API rate limits
+            time.sleep(1)
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching news: {e}")
+            break
+    
+    logging.info(f"Fetched a total of {len(all_articles)} articles")
+    
+    # Return exactly the number of articles requested, or all if fewer
+    return all_articles[:num_articles]
 
 def filter_articles(articles):
-    """Filter articles to ensure they contain relevant keywords."""
-    keywords = ["Trump", "Donald Trump"]
+    """Filter articles to ensure they contain relevant keywords, but be less strict."""
+    keywords = ["Trump", "Donald Trump", "Donald", "president"]
     filtered = []
+    logging.info(f"Filtering {len(articles)} articles...")
+    
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
         content = (title + " " + description).lower()
+        
+        # Accept if ANY keyword is found (not ALL)
         if any(keyword.lower() in content for keyword in keywords):
             filtered.append(article)
-    logging.info(f"Filtered {len(filtered)} relevant articles.")
+    
+    original_count = len(articles)
+    filtered_count = len(filtered)
+    filtered_percent = (filtered_count / original_count * 100) if original_count > 0 else 0
+    
+    logging.info(f"Filtered {filtered_count} relevant articles from {original_count} ({filtered_percent:.1f}%)")
+    
+    if filtered_count < original_count / 2:
+        logging.warning("More than half of articles were filtered out. Consider adjusting filter criteria.")
+    
     return filtered
 
 def summarize_article(article, num_sentences=2):
@@ -172,8 +226,9 @@ def improved_fact_check_article(article, fact_check_api_key: str):
 
 def run_trump_news_agent(news_api_key: str, fact_check_api_key: str):
     """Fetch, process, and save news articles to a JSON file."""
-    logging.info("Fetching news articles...")
-    articles = fetch_news(news_api_key)
+    logging.info("Starting news fetch process...")
+    articles = fetch_news_with_pagination(news_api_key, num_articles=50)  # Get 50 to ensure we have enough after filtering
+    
     if not articles:
         logging.error("No articles fetched. Using fallback data.")
         fallback = [{
@@ -190,8 +245,34 @@ def run_trump_news_agent(news_api_key: str, fact_check_api_key: str):
         return
     
     filtered_articles = filter_articles(articles)
-    logging.info("Generating summaries and performing fact-checking...")
+    logging.info(f"After filtering, we have {len(filtered_articles)} relevant articles out of {len(articles)} total.")
     
+    # If we don't have enough articles after filtering, try to fetch more
+    if len(filtered_articles) < 30 and len(articles) > 0:
+        logging.warning(f"Only {len(filtered_articles)} articles after filtering. Adjusting filter to be more permissive.")
+        
+        # Try with less strict filtering (check for Trump anywhere in the text)
+        less_strict_filtered = []
+        for article in articles:
+            text = (article.get("title", "") + " " + article.get("description", "")).lower()
+            if "trump" in text:
+                less_strict_filtered.append(article)
+        
+        # Add any new articles found with the less strict filter
+        existing_urls = {article.get("url") for article in filtered_articles}
+        for article in less_strict_filtered:
+            if article.get("url") not in existing_urls:
+                filtered_articles.append(article)
+                existing_urls.add(article.get("url"))
+        
+        logging.info(f"After adjusted filtering, we have {len(filtered_articles)} articles.")
+    
+    # Ensure we have exactly 30 articles or as many as possible
+    target_count = min(30, len(filtered_articles))
+    filtered_articles = filtered_articles[:target_count]
+    logging.info(f"Processing {len(filtered_articles)} articles for fact-checking and summarization.")
+    
+    # Process the articles
     news_data = []
     for article in filtered_articles:
         summary = summarize_article(article)
@@ -204,6 +285,8 @@ def run_trump_news_agent(news_api_key: str, fact_check_api_key: str):
             "url": article.get("url", "#"),
             "factCheck": fact_check
         })
+    
+    logging.info(f"Saving {len(news_data)} processed articles to trump_news.json")
     with open("trump_news.json", "w") as f:
         json.dump(news_data, f, indent=4)
     logging.info("Saved news data to trump_news.json")

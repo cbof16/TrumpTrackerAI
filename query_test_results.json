@@ -1,0 +1,30 @@
+{
+  "Trump": {
+    "count": 95,
+    "total": 80814
+  },
+  "Donald Trump": {
+    "count": 96,
+    "total": 47691
+  },
+  "Trump OR Donald": {
+    "count": 95,
+    "total": 86207
+  },
+  "Trump AND politics": {
+    "count": 100,
+    "total": 7817
+  },
+  "Trump OR Republican OR election": {
+    "count": 97,
+    "total": 89640
+  },
+  "former president Trump": {
+    "count": 98,
+    "total": 13980
+  },
+  "Donald Trump OR Trump campaign": {
+    "count": 100,
+    "total": 7063
+  }
+}
