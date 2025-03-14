@@ -96,7 +96,12 @@ TrumpTracker AI is an intelligent news aggregation platform that automatically c
 
 ## 🖼️ Screenshots
 
-[Add screenshots of the application interface here when available]
+![TrumpTracker AI Dashboard](./image.png)
+*Main dashboard showing Trump news articles with fact-checking information*
+
+![Dark Mode Interface](./darkmode.png)
+*The application in dark mode for comfortable nighttime viewing*
+
 
 ## 🔍 How It Works
 
@@ -117,6 +122,8 @@ trumptracker-ai/
 ├── requirements.txt      # Project dependencies
 ├── Dockerfile            # Container configuration
 ├── start.sh              # Startup script for Docker
+├── assets/               # Static assets
+│   └── images/           # Screenshots and images
 └── frontend/             # Frontend web assets
     └── dist/             # Distribution-ready frontend files
         └── index.html    # Main HTML interface
