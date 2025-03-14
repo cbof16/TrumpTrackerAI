@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrumpTracker AI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary-color: #0d6efd;
+            --secondary-color: #6c757d;
+            --success-color: #198754;
+            --danger-color: #dc3545;
+        }
+        body {
+            padding-top: 60px;
+            transition: background-color 0.3s ease;
+        }
+        .navbar-brand img {
+            height: 30px;
+            margin-right: 10px;
+        }
+        .card {
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            height: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+        .card-header {
+            font-weight: 600;
+            border-bottom: none;
+        }
+        .verified { color: var(--success-color); }
+        .disputed { color: var(--danger-color); }
+        .badge-verified {
+            background-color: var(--success-color);
+        }
+        .badge-disputed {
+            background-color: var(--danger-color);
+        }
+        .refresh-button {
+            cursor: pointer;
+            transition: transform 0.3s;
+            padding: 5px;
+            border-radius: 50%;
+        }
+        .refresh-button:hover {
+            background-color: rgba(0,0,0,0.05);
+            transform: rotate(30deg);
+        }
+        .refresh-button.loading {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #last-updated {
+            font-size: 0.8rem;
+            color: var(--secondary-color);
+        }
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+        }
+        .claim-item {
+            border-left: 3px solid var(--danger-color);
+            padding-left: 10px;
+            margin-bottom: 10px;
+        }
+        .verified-item {
+            border-left: 3px solid var(--success-color);
+            padding-left: 10px;
+            margin-bottom: 10px;
+        }
+        .filters-container {
+            background-color: rgba(0,0,0,0.03);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        [data-bs-theme="dark"] .filters-container {
+            background-color: rgba(255,255,255,0.05);
+        }
+        .nav-pills .nav-link.active {
+            background-color: var(--primary-color);
+        }
+        .sources-filter {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .skeleton-loader {
+            position: relative;
+            overflow: hidden;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        .skeleton-loader::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            transform: translateX(-100%);
+            background-image: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0) 0,
+                rgba(255, 255, 255, 0.2) 20%,
+                rgba(255, 255, 255, 0.5) 60%,
+                rgba(255, 255, 255, 0)
+            );
+            animation: shimmer 2s infinite;
+        }
+        @keyframes shimmer {
+            100% { transform: translateX(100%); }
+        }
+        [data-bs-theme="dark"] .skeleton-loader {
+            background-color: #40464b;
+        }
+        .sticky-top {
+            top: 70px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg fixed-top" id="main-navbar">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-newspaper"></i> TrumpTracker AI
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#about">About</a>
+                    </li>
+                </ul>
+                <div class="d-flex align-items-center">
+                    <span id="last-updated" class="me-2">Last updated: Never</span>
+                    <i id="manual-refresh" class="bi bi-arrow-clockwise refresh-button me-3" title="Refresh news data"></i>
+                    <button id="theme-toggle" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-moon"></i> <span id="theme-text">Dark Mode</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Hero Header -->
+        <div class="row mb-4">
+            <div class="col-12 text-center">
+                <h1 class="display-5 fw-bold">Trump News Tracker</h1>
+                <p class="lead mb-4">AI-powered news tracking and fact-checking</p>
+            </div>
+        </div>
+        
+        <!-- Loading Indicator -->
+        <div id="loading" class="row text-center my-5">
+            <div class="col-12">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">Fetching the latest Trump news articles...</p>
+            </div>
+        </div>
+        
+        <!-- Main Content Area -->
+        <div class="row" id="content-area" style="display: none;">
+            <!-- Filters Sidebar -->
+            <div class="col-lg-3 mb-4">
+                <div class="filters-container sticky-top">
+                    <h5 class="mb-3">Filters</h5>
+                    
+                    <!-- Status Filter -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Status</label>
+                        <div class="nav nav-pills nav-fill">
+                            <button class="nav-link active filter-status" data-status="all">All</button>
+                            <button class="nav-link filter-status" data-status="verified">Verified</button>
+                            <button class="nav-link filter-status" data-status="disputed">Disputed</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Sort Options -->
+                    <div class="mb-3">
+                        <label for="sort-select" class="form-label fw-bold">Sort By</label>
+                        <select id="sort-select" class="form-select">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="source">Source</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Sources Filter -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Sources</label>
+                        <div class="input-group mb-2">
+                            <input type="text" class="form-control" id="source-search" placeholder="Search sources">
+                            <button class="btn btn-outline-secondary" type="button" id="clear-source-search">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                        <div id="sources-list" class="sources-filter">
+                            <!-- Sources will be dynamically added here -->
+                        </div>
+                    </div>
+                    
+                    <!-- Reset Filters -->
+                    <button id="reset-filters" class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset Filters
+                    </button>
+                </div>
+            </div>
+            
+            <!-- News Articles -->
+            <div class="col-lg-9">
+                <div id="news-container" class="row">
+                    <!-- News articles will be populated here -->
+                </div>
+                
+                <!-- Pagination -->
+                <nav aria-label="Page navigation" class="my-4">
+                    <ul id="pagination" class="pagination justify-content-center">
+                        <!-- Pagination will be generated dynamically -->
+                    </ul>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- No Results Message -->
+        <div id="no-results" class="row" style="display: none;">
+            <div class="col-12">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i> No articles match your current filters. Try changing or resetting your filters.
+                </div>
+            </div>
+        </div>
+        
+        <!-- Error Message -->
+        <div id="error-message" class="row" style="display: none;">
+            <div class="col-12">
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i> <span id="error-text">An error occurred while fetching news.</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- About Section -->
+        <div class="row mt-5 pt-3" id="about">
+            <div class="col-12">
+                <h2 class="fw-bold">About TrumpTracker AI</h2>
+                <p>
+                    TrumpTracker AI is an intelligent news aggregation platform that automatically collects, analyzes, 
+                    and fact-checks news articles related to Donald Trump. Using advanced AI and natural language 
+                    processing, the platform filters through the noise of political coverage to deliver verified 
+                    information and identify disputed claims.
+                </p>
+                <div class="row my-4">
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body text-center">
+                                <i class="bi bi-robot fs-1 text-primary mb-3"></i>
+                                <h5 class="card-title">AI-Powered Analysis</h5>
+                                <p class="card-text">Our system uses NLP to process and summarize articles automatically.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body text-center">
+                                <i class="bi bi-shield-check fs-1 text-primary mb-3"></i>
+                                <h5 class="card-title">Fact Checking</h5>
+                                <p class="card-text">We verify claims using trusted fact-checking sources and APIs.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body text-center">
+                                <i class="bi bi-clock-history fs-1 text-primary mb-3"></i>
+                                <h5 class="card-title">Real-Time Updates</h5>
+                                <p class="card-text">Our system refreshes every 30 minutes to bring you the latest news.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="mt-5 py-4 text-center border-top">
+            <p class="mb-0">
+                TrumpTracker AI &copy; 2023 | 
+                <a href="https://github.com/yourusername/TrumpTracker-AI" target="_blank" class="text-decoration-none">
+                    <i class="bi bi-github"></i> GitHub
+                </a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- Toast container for notifications -->
+    <div class="toast-container">
+        <div id="notification-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <i class="bi bi-bell me-2"></i>
+                <strong class="me-auto">TrumpTracker AI</strong>
+                <small id="toast-time">Just now</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="notification-message">
+                News data has been updated.
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global variables
+        let newsData = [];
+        let filteredArticles = [];
+        let pollingInterval;
+        let lastUpdated = null;
+        let selectedSources = new Set();
+        let currentStatus = 'all';
+        let currentSort = 'newest';
+        let currentPage = 1;
+        let articlesPerPage = 10; // Increased from 6 to 10 to display more articles per page
+        const POLL_INTERVAL = 300000; // 5 minutes in milliseconds
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing app...');
+            
+            // Set up theme toggling
+            setupThemeToggle();
+            
+            // Set up manual refresh button
+            document.getElementById('manual-refresh').addEventListener('click', function() {
+                if (!this.classList.contains('loading')) {
+                    fetchNewsData(true);
+                    this.classList.add('loading');
+                }
+            });
+            
+            // Set up filter event listeners
+            setupFilterListeners();
+            
+            // Initial data fetch
+            fetchNewsData();
+            
+            // Set up polling
+            setupPolling();
+
+            // Add debug info to check article count
+            fetch('/api/news')
+                .then(response => {
+                    console.log('API Headers:', {
+                        'X-Article-Count': response.headers.get('X-Article-Count'),
+                        'X-Trump-Tracker-Version': response.headers.get('X-Trump-Tracker-Version')
+                    });
+                    return response.json();
+                })
+                .then(data => {
+                    console.log(`DEBUG: Total articles fetched: ${data.length}`);
+                    
+                    // Display article count in the header
+                    const headerInfo = document.createElement('div');
+                    headerInfo.className = 'text-center mb-3';
+                    headerInfo.innerHTML = `<small class="text-muted">Displaying ${data.length} articles</small>`;
+                    
+                    const heroHeader = document.querySelector('.lead.mb-4');
+                    if (heroHeader) {
+                        heroHeader.parentNode.insertBefore(headerInfo, heroHeader.nextSibling);
+                    }
+                })
+                .catch(err => console.error('Error in debug check:', err));
+        });
+
+        function setupThemeToggle() {
+            const themeToggle = document.getElementById('theme-toggle');
+            const themeText = document.getElementById('theme-text');
+            const currentTheme = localStorage.getItem('theme') || 'light';
+            
+            // Apply saved theme
+            document.documentElement.setAttribute('data-bs-theme', currentTheme);
+            updateNavbarTheme(currentTheme);
+            
+            // Update toggle button text
+            themeText.textContent = currentTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+            
+            // Add event listener for theme toggling
+            themeToggle.addEventListener('click', function() {
+                const newTheme = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-bs-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                themeText.textContent = newTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+                updateNavbarTheme(newTheme);
+            });
+        }
+        
+        function updateNavbarTheme(theme) {
+            const navbar = document.getElementById('main-navbar');
+            navbar.classList.remove('navbar-dark', 'bg-dark', 'navbar-light', 'bg-light');
+            if (theme === 'dark') {
+                navbar.classList.add('navbar-dark', 'bg-dark');
+            } else {
+                navbar.classList.add('navbar-light', 'bg-light');
+            }
+        }
+        
+        function setupFilterListeners() {
+            // Status filter buttons
+            document.querySelectorAll('.filter-status').forEach(button => {
+                button.addEventListener('click', function() {
+                    const status = this.dataset.status;
+                    document.querySelectorAll('.filter-status').forEach(btn => btn.classList.remove('active'));
+                    this.classList.add('active');
+                    currentStatus = status;
+                    currentPage = 1;
+                    applyFilters();
+                });
+            });
+            
+            // Sort select
+            document.getElementById('sort-select').addEventListener('change', function() {
+                currentSort = this.value;
+                currentPage = 1;
+                applyFilters();
+            });
+            
+            // Source search
+            document.getElementById('source-search').addEventListener('input', function() {
+                filterSourcesList(this.value);
+            });
+            
+            // Clear source search
+            document.getElementById('clear-source-search').addEventListener('click', function() {
+                document.getElementById('source-search').value = '';
+                filterSourcesList('');
+            });
+            
+            // Reset filters button
+            document.getElementById('reset-filters').addEventListener('click', resetFilters);
+        }
+
+        function setupPolling() {
+            console.log(`Setting up polling every ${POLL_INTERVAL/1000} seconds`);
+            if (pollingInterval) clearInterval(pollingInterval);
+            
+            pollingInterval = setInterval(() => {
+                fetchNewsData();
+            }, POLL_INTERVAL);
+            
+            // Clean up on page unload
+            window.addEventListener('beforeunload', () => {
+                if (pollingInterval) clearInterval(pollingInterval);
+            });
+        }
+        
+        function fetchNewsData(isManualRefresh = false) {
+            showLoading(true);
+            
+            console.log('Fetching news data...');
+            
+            fetch('/api/news')
+                .then(response => {
+                    console.log('API response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log(`Received ${data.length} articles`);
+                    showLoading(false);
+                    
+                    // Check if data has changed
+                    const hasChanged = JSON.stringify(data) !== JSON.stringify(newsData);
+                    
+                    if (hasChanged || isManualRefresh || !newsData.length) {
+                        newsData = data;
+                        filteredArticles = [...data]; 
+                        
+                        // Populate sources filter
+                        populateSourcesFilter(data);
+                        
+                        // Apply current filters
+                        applyFilters();
+                        
+                        // Update UI
+                        updateLastUpdated();
+                        
+                        // Show notification if not the first load and not manual refresh
+                        if (!isManualRefresh && lastUpdated !== null && hasChanged) {
+                            showNotification('News data has been updated!');
+                        }
+                    } else {
+                        console.log('No changes in news data');
+                    }
+                    
+                    // Show content area
+                    document.getElementById('content-area').style.display = 'flex';
+                    
+                    if (isManualRefresh) {
+                        document.getElementById('manual-refresh').classList.remove('loading');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching news:', error);
+                    showLoading(false);
+                    
+                    if (isManualRefresh) {
+                        document.getElementById('manual-refresh').classList.remove('loading');
+                    }
+                    
+                    if (!newsData.length) {
+                        // Show error message if no previous data
+                        document.getElementById('error-text').textContent = `Error loading news: ${error.message}. Will retry automatically.`;
+                        document.getElementById('error-message').style.display = 'flex';
+                    } else {
+                        // Show toast notification
+                        showNotification(`Error refreshing data: ${error.message}`, true);
+                    }
+                });
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+            document.getElementById('error-message').style.display = 'none';
+        }
+        
+        function updateLastUpdated() {
+            lastUpdated = new Date();
+            const formattedTime = lastUpdated.toLocaleTimeString();
+            document.getElementById('last-updated').textContent = `Last updated: ${formattedTime}`;
+        }
+        
+        function showNotification(message, isError = false) {
+            const toast = document.getElementById('notification-toast');
+            const toastMessage = document.getElementById('notification-message');
+            const toastTime = document.getElementById('toast-time');
+            
+            toastMessage.textContent = message;
+            toastTime.textContent = new Date().toLocaleTimeString();
+            
+            toast.classList.toggle('bg-danger', isError);
+            toast.classList.toggle('text-white', isError);
+            
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+        }
+        
+        function populateSourcesFilter(articles) {
+            const sourcesList = document.getElementById('sources-list');
+            const sources = [...new Set(articles.map(article => article.source).filter(source => source))].sort();
+            
+            sourcesList.innerHTML = '';
+            
+            sources.forEach(source => {
+                const div = document.createElement('div');
+                div.className = 'form-check';
+                
+                const input = document.createElement('input');
+                input.className = 'form-check-input source-checkbox';
+                input.type = 'checkbox';
+                input.id = `source-${source.replace(/\s+/g, '-').toLowerCase()}`;
+                input.dataset.source = source;
+                
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = input.id;
+                label.textContent = source;
+                
+                div.appendChild(input);
+                div.appendChild(label);
+                sourcesList.appendChild(div);
+                
+                // Add event listener
+                input.addEventListener('change', function() {
+                    if (this.checked) {
+                        selectedSources.add(this.dataset.source);
+                    } else {
+                        selectedSources.delete(this.dataset.source);
+                    }
+                    currentPage = 1;
+                    applyFilters();
+                });
+            });
+        }
+        
+        function filterSourcesList(searchText) {
+            const sourceItems = document.querySelectorAll('#sources-list .form-check');
+            const query = searchText.toLowerCase();
+            
+            sourceItems.forEach(item => {
+                const source = item.querySelector('label').textContent.toLowerCase();
+                item.style.display = source.includes(query) ? '' : 'none';
+            });
+        }
+        
+        function resetFilters() {
+            // Reset status
+            document.querySelectorAll('.filter-status').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.status === 'all') btn.classList.add('active');
+            });
+            currentStatus = 'all';
+            
+            // Reset sort
+            document.getElementById('sort-select').value = 'newest';
+            currentSort = 'newest';
+            
+            // Reset sources
+            document.querySelectorAll('.source-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            selectedSources.clear();
+            
+            // Reset search
+            document.getElementById('source-search').value = '';
+            filterSourcesList('');
+            
+            // Reset page
+            currentPage = 1;
+            
+            // Apply reset filters
+            applyFilters();
+        }
+        
+        function applyFilters() {
+            // Filter by status
+            filteredArticles = newsData.filter(article => {
+                if (currentStatus === 'all') return true;
+                return article.factCheck.status.toLowerCase() === currentStatus;
+            });
+            
+            // Filter by selected sources
+            if (selectedSources.size > 0) {
+                filteredArticles = filteredArticles.filter(article => 
+                    selectedSources.has(article.source)
+                );
+            }
+            
+            // Sort articles
+            switch (currentSort) { // Fixed: was using currentStatus instead of currentSort
+                case 'newest':
+                    filteredArticles.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+                    break;
+                case 'oldest':
+                    filteredArticles.sort((a, b) => new Date(a.publishedAt || 0) - new Date(b.publishedAt || 0));
+                    break;
+                case 'source':
+                    filteredArticles.sort((a, b) => (a.source || '').localeCompare(b.source || ''));
+                    break;
+            }
+            
+            // Show articles count after filtering
+            const noResultsElem = document.getElementById('no-results');
+            if (filteredArticles.length > 0) {
+                noResultsElem.style.display = 'none';
+                const totalArticlesInfo = document.createElement('div');
+                totalArticlesInfo.className = 'col-12 mb-3';
+                totalArticlesInfo.innerHTML = `
+                    <div class="alert alert-info">
+                        Showing ${filteredArticles.length} article(s) out of ${newsData.length} total
+                    </div>
+                `;
+                const newsContainer = document.getElementById('news-container');
+                if (newsContainer.firstChild) {
+                    newsContainer.insertBefore(totalArticlesInfo, newsContainer.firstChild);
+                } else {
+                    newsContainer.appendChild(totalArticlesInfo);
+                }
+            }
+            
+            // Render results
+            renderArticles();
+            renderPagination();
+        }
+        
+        function renderArticles() {
+            const container = document.getElementById('news-container');
+            const noResults = document.getElementById('no-results');
+            
+            container.innerHTML = '';
+            
+            if (filteredArticles.length === 0) {
+                noResults.style.display = 'block';
+                return;
+            }
+            
+            noResults.style.display = 'none';
+            
+            // Get paginated results
+            const startIndex = (currentPage - 1) * articlesPerPage;
+            const paginatedArticles = filteredArticles.slice(startIndex, startIndex + articlesPerPage);
+            
+            paginatedArticles.forEach(article => {
+                const statusClass = article.factCheck.status.toLowerCase() === "disputed" ? "disputed" : "verified";
+                const statusBadge = `<span class="badge badge-${statusClass} text-white">${article.factCheck.status}</span>`;
+                
+                // Generate claims HTML if present
+                let claimsHtml = '';
+                if (article.factCheck.claims && article.factCheck.claims.length > 0) {
+                    claimsHtml = '<div class="mt-3"><h6 class="fw-bold">Claims:</h6>';
+                    article.factCheck.claims.forEach(claim => {
+                        claimsHtml += `
+                            <div class="${statusClass}-item mb-2">
+                                <p class="mb-1">${claim.claim}</p>
+                                <small>Source: <a href="${claim.url}" target="_blank" rel="noopener">${claim.publisher}</a></small>
+                            </div>
+                        `;
+                    });
+                    claimsHtml += '</div>';
+                }
+                
+                const col = document.createElement('div');
+                col.className = 'col-md-6 col-lg-4 mb-4';
+                
+                col.innerHTML = `
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>${article.source || 'Unknown'}</span>
+                            ${statusBadge}
+                        </div>
+                        <div class="card-body">
+                            <h5 class="card-title">${article.title}</h5>
+                            <p class="card-text">${article.summary}</p>
+                            ${claimsHtml}
+                        </div>
+                        <div class="card-footer d-flex justify-content-between align-items-center">
+                            <small class="text-muted">${formatDate(article.publishedAt)}</small>
+                            <a href="${article.url}" class="btn btn-primary btn-sm" target="_blank" rel="noopener">Read Article</a>
+                        </div>
+                    </div>
+                `;
+                
+                container.appendChild(col);
+            });
+        }
+        
+        function renderPagination() {
+            const pagination = document.getElementById('pagination');
+            pagination.innerHTML = '';
+            
+            const totalPages = Math.ceil(filteredArticles.length / articlesPerPage);
+            
+            if (totalPages <= 1) return;
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" aria-label="Previous"><span aria-hidden="true">&laquo;</span></a>`;
+            prevLi.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (currentPage > 1) {
+                    currentPage--;
+                    renderArticles();
+                    renderPagination();
+                    
+                    // Scroll to top of articles
+                    document.getElementById('news-container').scrollIntoView({behavior: 'smooth'});
+                }
+            });
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            const maxVisiblePages = 5; // Maximum number of page links to show
+            let startPage = 1;
+            let endPage = totalPages;
+            
+            if (totalPages > maxVisiblePages) {
+                // Calculate start and end page numbers
+                const halfVisible = Math.floor(maxVisiblePages / 2);
+                
+                if (currentPage <= halfVisible + 1) {
+                    // Near the beginning
+                    endPage = maxVisiblePages;
+                } else if (currentPage >= totalPages - halfVisible) {
+                    // Near the end
+                    startPage = totalPages - maxVisiblePages + 1;
+                } else {
+                    // Middle
+                    startPage = currentPage - halfVisible;
+                    endPage = currentPage + halfVisible;
+                }
+            }
+            
+            // First page link (if not in view)
+            if (startPage > 1) {
+                const firstLi = document.createElement('li');
+                firstLi.className = 'page-item';
+                firstLi.innerHTML = '<a class="page-link" href="#">1</a>';
+                firstLi.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    currentPage = 1;
+                    renderArticles();
+                    renderPagination();
+                    document.getElementById('news-container').scrollIntoView({behavior: 'smooth'});
+                });
+                pagination.appendChild(firstLi);
+                
+                // Ellipsis (if needed)
+                if (startPage > 2) {
+                    const ellipsisLi = document.createElement('li');
+                    ellipsisLi.className = 'page-item disabled';
+                    ellipsisLi.innerHTML = '<span class="page-link">...</span>';
+                    pagination.appendChild(ellipsisLi);
+                }
+            }
+            
+            // Page number links
+            for (let i = startPage; i <= endPage; i++) {
+                const pageLi = document.createElement('li');
+                pageLi.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                pageLi.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+                pageLi.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    currentPage = i;
+                    renderArticles();
+                    renderPagination();
+                    document.getElementById('news-container').scrollIntoView({behavior: 'smooth'});
+                });
+                pagination.appendChild(pageLi);
+            }
+            
+            // Last page link (if not in view)
+            if (endPage < totalPages) {
+                // Ellipsis (if needed)
+                if (endPage < totalPages - 1) {
+                    const ellipsisLi = document.createElement('li');
+                    ellipsisLi.className = 'page-item disabled';
+                    ellipsisLi.innerHTML = '<span class="page-link">...</span>';
+                    pagination.appendChild(ellipsisLi);
+                }
+                
+                const lastLi = document.createElement('li');
+                lastLi.className = 'page-item';
+                lastLi.innerHTML = `<a class="page-link" href="#">${totalPages}</a>`;
+                lastLi.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    currentPage = totalPages;
+                    renderArticles();
+                    renderPagination();
+                    document.getElementById('news-container').scrollIntoView({behavior: 'smooth'});
+                });
+                pagination.appendChild(lastLi);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" aria-label="Next"><span aria-hidden="true">&raquo;</span></a>`;
+            nextLi.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    renderArticles();
+                    renderPagination();
+                    document.getElementById('news-container').scrollIntoView({behavior: 'smooth'});
+                }
+            });
+            pagination.appendChild(nextLi);
+        }
+        
+        function formatDate(dateString) {
+            if (!dateString) return 'Date unknown';
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        }
+    </script>
+</body>
+</html>
